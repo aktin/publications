@@ -1,0 +1,277 @@
+<sql xmlns="http://aktin.org/ns/i2b2/sql">
+    <temporary-table name="temp_encounter_data"/>
+    <temporary-table name="temp_diagnoses"/>
+    <temporary-table name="temp_cohort_data"/>
+    <temporary-table name="temp_sample"/>
+
+    <source type="application/sql">
+        <![CDATA[
+        -- Preprocessing of raw data
+        CREATE TEMPORARY TABLE temp_cohort_data AS
+
+        -- SELECT BASIC INFORMATION
+        SELECT DISTINCT
+            obs.encounter_num AS encounter_num,
+            obs.patient_num AS patient_number,
+            EXTRACT(year FROM age(vis_dim.start_date, pat_dim.birth_date)) AS age_in_years,
+            pat_dim.sex_cd as gender,
+            vis_dim.start_date AS admission_date,
+            vis_dim.end_date AS discharge_date
+        FROM i2b2crcdata.observation_fact obs 
+        JOIN i2b2crcdata.patient_dimension pat_dim ON obs.patient_num = pat_dim.patient_num
+        JOIN i2b2crcdata.visit_dimension vis_dim ON obs.encounter_num = vis_dim.encounter_num
+
+        -- Column Time Filter
+        WHERE vis_dim.start_date BETWEEN '20230101' AND '20240101';
+        -- End Column Time Filter
+
+        CREATE TEMPORARY TABLE temp_sample AS
+        SELECT (SELECT COUNT(DISTINCT encounter_num) FROM temp_cohort_data) AS total_aktin_cases;
+
+        -- Filter for VALID Cases
+        -- get patient ID for patient number
+        ALTER TABLE temp_cohort_data ADD COLUMN patient_identifier VARCHAR;
+        UPDATE temp_cohort_data SET patient_identifier = pat.patient_ide
+        FROM i2b2crcdata.patient_mapping pat
+        WHERE temp_cohort_data.patient_number = pat.patient_num;
+
+        -- get encounter ID for encounter number
+        ALTER TABLE temp_cohort_data ADD COLUMN encounter_identifier VARCHAR;
+        UPDATE temp_cohort_data SET encounter_identifier = enc.encounter_ide
+        FROM i2b2crcdata.encounter_mapping enc
+        WHERE temp_cohort_data.encounter_num = enc.encounter_num;
+
+        -- get billing ID for encounter
+        ALTER TABLE temp_cohort_data ADD COLUMN billing_identifier VARCHAR;
+        UPDATE temp_cohort_data SET billing_identifier = obs.tval_char
+        FROM i2b2crcdata.observation_fact obs
+        WHERE temp_cohort_data.encounter_num = obs.encounter_num
+        AND concept_cd LIKE 'AKTIN:Case%';
+
+        -- Drop all AKTIN opt-outs from temp_cohort_data
+        -- get AKTIN patient ID
+        ALTER TABLE temp_cohort_data ADD COLUMN patient_opt VARCHAR;
+        UPDATE temp_cohort_data SET patient_opt = opt.pat_psn
+        FROM i2b2crcdata.optinout_patients opt
+        WHERE ((opt.study_id = 'AKTIN' AND opt.optinout = 'O') OR (opt.study_id = 'CERT' AND opt.optinout = 'I'))
+        AND opt.pat_ref = 'PAT'
+        AND opt.pat_psn = temp_cohort_data.patient_identifier;
+
+        -- get AKTIN encounter ID
+        ALTER TABLE temp_cohort_data ADD COLUMN encounter_opt VARCHAR;
+        UPDATE temp_cohort_data SET encounter_opt = opt.pat_psn
+        FROM i2b2crcdata.optinout_patients opt
+        WHERE ((opt.study_id = 'AKTIN' AND opt.optinout = 'O') OR (opt.study_id = 'CERT' AND opt.optinout = 'I'))
+        AND opt.pat_ref = 'ENC'
+        AND opt.pat_psn = temp_cohort_data.encounter_identifier;
+
+        -- get AKTIN billing ID
+        ALTER TABLE temp_cohort_data ADD COLUMN billing_opt VARCHAR;
+        UPDATE temp_cohort_data SET billing_opt = opt.pat_psn
+        FROM i2b2crcdata.optinout_patients opt
+        WHERE ((opt.study_id = 'AKTIN' AND opt.optinout = 'O') OR (opt.study_id = 'CERT' AND opt.optinout = 'I'))
+        AND opt.pat_ref = 'BIL'
+        AND opt.pat_psn = temp_cohort_data.billing_identifier;
+
+        -- Delete rows merged with opt-in/out patients
+        DELETE FROM temp_cohort_data
+        WHERE patient_opt IS NOT NULL
+        OR encounter_opt IS NOT NULL
+        OR billing_opt IS NOT NULL;
+
+        -- Delete columns
+        ALTER TABLE temp_cohort_data DROP COLUMN patient_opt, DROP COLUMN encounter_opt, DROP COLUMN billing_opt, DROP COLUMN billing_identifier, DROP COLUMN patient_identifier, DROP COLUMN encounter_identifier;
+
+        -- Add a column to store the count of valid cases
+        ALTER TABLE temp_sample ADD COLUMN valid_aktin_cases INTEGER;
+        -- Update the filtered_cases column with the count of distinct encounter numbers from temp_cohort_data
+        UPDATE temp_sample SET valid_aktin_cases = (SELECT COUNT(DISTINCT encounter_num) FROM temp_cohort_data);
+
+        -- ### Table 1: Encounter Data (without diagnoses) ###
+        CREATE TEMPORARY TABLE temp_encounter_data AS
+        SELECT DISTINCT
+
+        -- Column Age_Years
+        age_in_years,
+        -- End Column Age_Years
+        -- Column Gender
+        gender as gender,
+        -- End Column Gender
+        -- Column Admission Date
+        TO_CHAR(admission_date, 'YYYY-MM-DD HH24') AS admission_timestamp,
+        -- End Column Admission Date
+        -- Column Transfer/Discharge
+        AGE(discharge_date, admission_date) AS discharge_time,
+
+        encounter_num
+        FROM temp_cohort_data
+        -- Sort table by encounter number in ascending order
+        ORDER BY encounter_num ASC;
+
+        -- Column Assignment
+        ALTER TABLE temp_encounter_data ADD COLUMN referral_type VARCHAR;
+        UPDATE temp_encounter_data SET referral_type = CASE
+            WHEN substr(concept_cd, 16) = 'VAP' THEN 'Contracted Doctor/Practice'
+            WHEN substr(concept_cd, 16) = 'KVNPIK' THEN 'Emergency Practice at Hospital'
+            WHEN substr(concept_cd, 16) = 'KVNDAK' THEN 'Emergency Service Outside of Hospital'
+            WHEN substr(concept_cd, 16) = 'RD' THEN 'Rescue Service'
+            WHEN substr(concept_cd, 16) = 'NA' THEN 'Emergency Doctor'
+            WHEN substr(concept_cd, 16) = 'KLINV' THEN 'Clinic/Transfer'
+            WHEN substr(concept_cd, 16) = 'NPHYS' THEN 'Non-physician Referral'
+            WHEN substr(concept_cd, 16) = 'OTH' THEN 'Other'
+            ELSE
+                substr(concept_cd, 16) 
+            END 
+        FROM i2b2crcdata.observation_fact 
+        WHERE concept_cd LIKE 'AKTIN:REFERRAL%' AND modifier_cd = '@' 
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Assignment
+
+        -- Column Transport
+        ALTER TABLE temp_encounter_data ADD COLUMN transport_mode VARCHAR;
+        UPDATE temp_encounter_data SET transport_mode = CASE
+            WHEN concept_cd = 'AKTIN:TRANSPORT:1' THEN 'Ambulance'
+            WHEN concept_cd = 'AKTIN:TRANSPORT:2' THEN 'Emergency Ambulance'
+            WHEN concept_cd = 'AKTIN:TRANSPORT:3' THEN 'Emergency Doctor Vehicle'
+            WHEN concept_cd = 'AKTIN:TRANSPORT:4' THEN 'Rescue Helicopter'
+            WHEN concept_cd = 'AKTIN:TRANSPORT:NA' THEN 'None'
+            WHEN concept_cd = 'AKTIN:TRANSPORT:OTH' THEN 'Other'
+            ELSE 
+                concept_cd
+            END 
+        FROM i2b2crcdata.observation_fact
+        WHERE concept_cd LIKE 'AKTIN:TRANSPORT%' AND modifier_cd = '@'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Transport
+
+        -- Column Presentation Reason (cedis)
+        ALTER TABLE temp_encounter_data ADD COLUMN presentation_reason VARCHAR;
+        UPDATE temp_encounter_data SET presentation_reason = CASE
+            WHEN concept_cd = '75322-8:UNK' THEN '999' 
+            WHEN concept_cd = 'CEDIS30:UNK' THEN '999'
+            WHEN concept_cd LIKE '75322-8%' THEN substr(concept_cd, 8)
+            WHEN concept_cd LIKE 'CEDIS%' THEN substr(concept_cd, 9) 
+            ELSE 
+                concept_cd
+            END 
+        FROM i2b2crcdata.observation_fact
+        WHERE (concept_cd LIKE 'CEDIS%' OR concept_cd LIKE '75322-8%') AND modifier_cd = '@'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Presentation Reason
+
+        -- Column Initial Triage
+        ALTER TABLE temp_encounter_data ADD COLUMN initial_triage VARCHAR;
+        UPDATE temp_encounter_data SET initial_triage = CASE
+            WHEN concept_cd LIKE 'MTS:%' THEN substr(concept_cd, 5) 
+            WHEN concept_cd LIKE 'ESI:%' THEN substr(concept_cd, 5) 
+            WHEN concept_cd LIKE 'AKTIN:ASSESSMENT%' THEN substr(concept_cd, 18) 
+            ELSE 
+                concept_cd
+            END 
+        FROM i2b2crcdata.observation_fact
+        WHERE (concept_cd LIKE 'MTS%' OR concept_cd LIKE 'ESI%' OR concept_cd LIKE 'AKTIN:ASSESSMENT%') AND modifier_cd = '@'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Initial Triage
+
+        -- Column Triage System
+        ALTER TABLE temp_encounter_data ADD COLUMN triage_system VARCHAR;
+        UPDATE temp_encounter_data SET triage_system = CASE
+            WHEN concept_cd LIKE 'MTS:%' THEN 'MTS'
+            WHEN concept_cd LIKE 'ESI:%' THEN 'ESI' 
+            WHEN concept_cd LIKE 'AKTIN:ASSESSMENT' THEN 'Other'
+            ELSE 
+                concept_cd
+            END 
+        FROM i2b2crcdata.observation_fact
+        WHERE (concept_cd LIKE 'MTS%' OR concept_cd LIKE 'ESI%' OR concept_cd LIKE 'AKTIN:ASSESSMENT%') AND modifier_cd = '@'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Triage System
+
+        -- Column Disposition
+        ALTER TABLE temp_encounter_data ADD COLUMN disposition VARCHAR;
+        UPDATE temp_encounter_data SET disposition = CASE
+            WHEN concept_cd = 'AKTIN:TRANSFER:1' THEN 'Admission to Functional Area'
+            WHEN concept_cd = 'AKTIN:TRANSFER:2' THEN 'External Transfer to Functional Area'
+            WHEN concept_cd = 'AKTIN:TRANSFER:3' THEN 'Admission to Monitoring Station'
+            WHEN concept_cd = 'AKTIN:TRANSFER:4' THEN 'External Transfer to Monitoring Station'
+            WHEN concept_cd = 'AKTIN:TRANSFER:5' THEN 'Admission to Normal Ward'
+            WHEN concept_cd = 'AKTIN:TRANSFER:6' THEN 'External Transfer to Normal Ward'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:1' THEN 'Death'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:2' THEN 'Discharge Against Medical Advice'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:3' THEN 'Treatment Discontinued by Patient'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:4' THEN 'Discharge to Home'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:5' THEN 'Discharge to Continuing Care Physician'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:6' THEN 'No Doctor Contact'
+            WHEN concept_cd = 'AKTIN:DISCHARGE:OTH' THEN 'Other Type of Discharge'
+            ELSE 
+                concept_cd
+            END 
+        FROM i2b2crcdata.observation_fact
+        WHERE ((concept_cd LIKE '%TRANSFER%' AND concept_cd <> 'AKTIN:TRANSFER:Time of Transfer') OR concept_cd LIKE '%DISCHARGE%') AND modifier_cd = '@'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Disposition
+
+        -- Column Triage Timestamp
+        ALTER TABLE temp_encounter_data ADD COLUMN triage_timestamp TIMESTAMP;
+        UPDATE temp_encounter_data SET triage_timestamp = start_date
+        FROM i2b2crcdata.observation_fact
+        WHERE (concept_cd LIKE 'MTS%' OR concept_cd LIKE 'ESI%' OR concept_cd LIKE 'AKTIN:ASSESSMENT') AND modifier_cd = 'effectiveTimeLow'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column Triage Timestamp
+
+        -- Column First Doctor Contact Timestamp
+        ALTER TABLE temp_encounter_data ADD COLUMN first_doctor_contact_timestamp TIMESTAMP;
+        UPDATE temp_encounter_data SET first_doctor_contact_timestamp = start_date
+        FROM i2b2crcdata.observation_fact
+        WHERE (concept_cd = 'AKTIN:PHYSENCOUNTER' OR concept_cd = 'AKTIN:First Doctor Contact Time') AND modifier_cd = 'timeLow'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_encounter_data.encounter_num;
+        -- End Column First Doctor Contact Timestamp
+
+        -- Column AKTIN Diagnose Table
+        -- ### Table 2: Patient Diagnoses (Emergency Department Dataset) ###
+        CREATE TEMPORARY TABLE temp_diagnoses AS
+        SELECT DISTINCT
+            temp_cohort_data.encounter_num,
+            instance_num,
+            substr(i2b2crcdata.observation_fact.concept_cd, 9) as icd_code
+        FROM temp_cohort_data
+        INNER JOIN i2b2crcdata.observation_fact 
+        ON temp_cohort_data.encounter_num = i2b2crcdata.observation_fact.encounter_num
+        WHERE i2b2crcdata.observation_fact.concept_cd LIKE 'ICD10GM:%' AND i2b2crcdata.observation_fact.provider_id = '@' and i2b2crcdata.observation_fact.modifier_cd = '@';
+
+        -- Column primary emergency room diagnosis
+        ALTER TABLE temp_diagnoses ADD COLUMN leading_diagnosis VARCHAR;
+        UPDATE temp_diagnoses SET leading_diagnosis = 'f'
+        FROM i2b2crcdata.observation_fact 
+        WHERE concept_cd LIKE 'ICD10GM:%' AND provider_id = '@' AND modifier_cd = 'AKTIN:DIAG:F'
+        AND i2b2crcdata.observation_fact.encounter_num = temp_diagnoses.encounter_num
+        AND i2b2crcdata.observation_fact.instance_num = temp_diagnoses.instance_num
+        AND substr(i2b2crcdata.observation_fact.concept_cd, 9) = temp_diagnoses.icd_code;
+        -- End Column primary emergency room diagnosis
+
+        -- Column diagnosis markers
+        ALTER TABLE temp_diagnoses ADD COLUMN additional_diagnosis_marker VARCHAR;
+        UPDATE temp_diagnoses SET additional_diagnosis_marker = substr(modifier_cd, 12)
+        FROM i2b2crcdata.observation_fact 
+        WHERE concept_cd LIKE 'ICD10GM:%' 
+        AND provider_id = '@'
+        AND (modifier_cd LIKE 'AKTIN:DIAG:%' AND modifier_cd NOT LIKE 'AKTIN:DIAG:F')
+        AND i2b2crcdata.observation_fact.encounter_num = temp_diagnoses.encounter_num
+        AND i2b2crcdata.observation_fact.instance_num = temp_diagnoses.instance_num
+        AND substr(i2b2crcdata.observation_fact.concept_cd, 9) = temp_diagnoses.icd_code;
+        -- End Column diagnosis markers
+
+        -- Delete empty cases and instance numbers
+        ALTER TABLE temp_diagnoses DROP COLUMN instance_num;
+        DELETE FROM temp_diagnoses WHERE icd_code is NULL;
+        -- End Column AKTIN Diagnose Table
+        ]]>
+    </source>
+    <anonymize>
+        <key table="temp_encounter_data" column="encounter_num"/>
+        <ref table="temp_diagnoses" column="encounter_num"/>
+    </anonymize>
+    <export table="temp_encounter_data" destination="case_data"/>
+    <export table="temp_diagnoses" destination="diag_data"/>
+    <export table="temp_sample" destination="sample"/>   
+</sql>
