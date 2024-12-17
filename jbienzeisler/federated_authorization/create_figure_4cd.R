@@ -1,5 +1,5 @@
 # -------------------------------------------------------------------------
-# Script Title: Figure 5c and 5d - Query Completion Time Analysis
+# Script Title: Figure 4c and 4d - Query Completion Time Analysis
 # Author: Jonas Bienzeisler
 # Email: jbienzeisler@ukaachen.de
 # Affiliation: Institute of Medical Informatics, Medical Faculty of the RWTH Aachen University
@@ -14,8 +14,8 @@
 # - Loads query broker metadata.
 # - Prepares data for Kaplan-Meier survival analysis.
 # - Visualizes:
-#    1) **Figure 5c**: Query completion time survival curves by year.
-#    2) **Figure 5d**: Query response rate with hexbin density plots showing node activity.
+#    1) **Figure 4c**: Query completion time survival curves by year.
+#    2) **Figure 4d**: Query response rate with hexbin density plots showing node activity.
 # - Adds confidence intervals and legends for completion time analysis.
 #
 # Input Data:
