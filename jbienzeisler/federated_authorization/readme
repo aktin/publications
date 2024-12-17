@@ -1,0 +1,60 @@
+AKTIN Infrastructure - R Scripts for Data Analysis and Visualization
+Description
+This repository contains R scripts used to generate key figures and tables for the manuscript:
+
+"Pioneering Federated Data Access for a Learning Healthcare System: Implementation Report of the Federated Data Access Authorization System of the German National Emergency Department Data Registry"
+
+The scripts produce the following outputs:
+
+Figure 5a and 5b:
+
+Growth of the AKTIN Infrastructure:
+Active Emergency Department (ED) nodes per year.
+Accessible Electronic Health Records (EHRs) per year.
+Figure 5c and 5d:
+
+Query completion times:
+Kaplan-Meier survival curves for individual query completion.
+Hexbin density distribution of unanswered queries by node activity.
+Supplementary Table 3:
+
+Frequency analysis of key performance indicators (KPIs), including:
+Time until query completion.
+Time until query rejection.
+Query processing times.
+Files
+create_figure_5ab.R: Script to create Figure 5a (ED nodes) and Figure 5b (accessible records).
+create_figure_5cd.R: Script to create Figure 5c and 5d (query completion times and density).
+create_supplementary_table_3.R: Script to generate Supplementary Table 3 (KPI frequency statistics).
+data_analysis.csv: Input file with anonymized query log data.
+Input Data Format
+The data_analysis.csv file must include the following columns:
+
+request_id (anonymized)
+node_id (anonymized)
+last_status
+time_until_queued
+time_until_rejection
+processing_time (in seconds)
+time_until_completed (in days)
+year
+automatic_rule
+Outputs
+Figures:
+
+figure_5a_5b.png
+figure_5c_5d.png
+Table:
+
+table3.html
+table3.doc
+Usage
+Place the data_analysis.csv file in the working directory.
+Run the respective R scripts to generate the figures and table.
+Dependencies:
+
+ggplot2, ggtext, grid, patchwork, survival, survminer, dplyr, Hmisc, arsenal, lubridate.
+Contact
+Author: Jonas Bienzeisler
+Email: jbienzeisler@ukaachen.de
+Affiliation: Institute of Medical Informatics, Medical Faculty of the RWTH Aachen University
