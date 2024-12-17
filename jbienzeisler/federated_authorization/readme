@@ -6,12 +6,12 @@ This repository contains R scripts used to generate key figures and tables for t
 
 The scripts produce the following outputs:
 
-Figure 5a and 5b:
+Figure 4a and 4b:
 
 Growth of the AKTIN Infrastructure:
 Active Emergency Department (ED) nodes per year.
 Accessible Electronic Health Records (EHRs) per year.
-Figure 5c and 5d:
+Figure 4c and 4d:
 
 Query completion times:
 Kaplan-Meier survival curves for individual query completion.
@@ -23,8 +23,8 @@ Time until query completion.
 Time until query rejection.
 Query processing times.
 Files
-create_figure_5ab.R: Script to create Figure 5a (ED nodes) and Figure 5b (accessible records).
-create_figure_5cd.R: Script to create Figure 5c and 5d (query completion times and density).
+create_figure_4ab.R: Script to create Figure 5a (ED nodes) and Figure 5b (accessible records).
+create_figure_4cd.R: Script to create Figure 5c and 5d (query completion times and density).
 create_supplementary_table_3.R: Script to generate Supplementary Table 3 (KPI frequency statistics).
 data_analysis.csv: Input file with anonymized query log data.
 Input Data Format
