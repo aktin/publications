@@ -1,11 +1,11 @@
 # -------------------------------------------------------------------------
-# Script Title: Figure 5a and 5b - Growth of the AKTIN Infrastructure
+# Script Title: Figure 4a and 4b - Growth of the AKTIN Infrastructure
 # Author: Jonas Bienzeisler
 # Email: jbienzeisler@ukaachen.de
 # Affiliation: Institute of Medical Informatics, Medical Faculty of the RWTH Aachen University
 # 
 # Description:
-# This R script calculates and visualizes the data for Figure 5a and 5b 
+# This R script calculates and visualizes the data for Figure 4a and 4b 
 # from the manuscript titled:
 # "Pioneering Federated Data Access for a Learning Healthcare System: 
 # Implementation Report of the Federated Data Access Authorization System 
