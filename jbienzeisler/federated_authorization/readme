@@ -4,7 +4,7 @@ This repository contains R scripts used to generate key figures and tables for t
 
 "Pioneering Federated Data Access for a Learning Healthcare System: Implementation Report of the Federated Data Access Authorization System of the German National Emergency Department Data Registry"
 
-The scripts produce the following outputs:
+The scripts produce the following outputs from the data published available from https://dx.doi.org/10.5281/zenodo.14509531:
 
 Figure 4a and 4b:
 
